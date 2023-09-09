@@ -1,6 +1,7 @@
 pico-8 cartridge // http://www.pico-8.com
 version 41
 __lua__
+map_dim=64
 cam_pos = nil
 cam_target = nil
 cam_speed = 5
@@ -8,10 +9,10 @@ grid={}
 prompt_stack=nil
 minimap={
 	open=false,
-	filter=nil
+	filter=nil,
+	mode="v"
 }
 selector={
-	active=false,
 	tidx=0,
 	targeting=nil
 }
@@ -19,9 +20,20 @@ options_menu={
 	options={},
 	idx=0
 }
+factions={
+	{
+		name="Matthew's Gift",
+	},
+	{
+		name="Coros"
+	},
+	{
+		name="Salivine",
+		owned=true
+	}
+}
 
 function _init()
-	prompt_stack=stack()
 	cam_pos = vec2(0,0)
 	cam_target = vec2(0,0)
 
@@ -31,13 +43,31 @@ function _init()
 	start_ship.island = get_home_island()
 	start_ship.home = start_ship.island
 	target_home()
+	generate_others()
+
+	prompt_stack=stack()
+	prompt_stack:push({ update=update_default, draw=draw_minimap })
+	prompt_stack:push({ update=update_cam })
 end
 
 function _update()
-	if not minimap.open then
-		foreach(islands,update_island)
-		foreach(ships,update_ship)
-		foreach(items,update_item)
+	local prompt = prompt_stack:peek()
+
+	if prompt then
+		if prompt.update then
+			prompt.update()
+		end
+
+		if prompt.default == nil or prompt.default then
+			foreach(islands,update_island)
+			foreach(ships,update_ship)
+			foreach(items,update_item)
+		end
+	end
+
+	if #prompt_stack > 1 and btnp(4) then
+		sfx(2,-1)
+		prompt_stack:pop()
 	end
 
 	local lerp_amt = 0.25
@@ -46,23 +76,11 @@ function _update()
 		lerp(cam_pos.x, cam_target.x, lerp_amt),
 		lerp(cam_pos.y, cam_target.y, lerp_amt)
 	)
-
-	-- if theres an active selection
-	if selector.tidx > 0 then
-		cam_target = islands_in_view[selector.tidx].pos - vec2(64,64)
-	end
-
-	if btnp(❎) and btnp(4) then
-		target_home()
-	elseif selector.targeting ~= nil then
-		update_unit()
-	elseif selector.active then
-		update_select()
-	else
-		update_cam()
-	end
 	
 	camera(cam_pos.x,cam_pos.y)
+end
+
+function generate_others()
 end
 
 function entity()
@@ -71,24 +89,11 @@ function entity()
 	}
 end
 
-function update_unit()
-	local u = selector.targeting
+function update_default()
+	minimap.mode = "v"
 
-	if btnp(0) or btnp(2) then
-		options_menu.idx = max((options_menu.idx - 1) % #options_menu.options, 1)
-	end
-	if btnp(1) or btnp(3) then
-		options_menu.idx = max((options_menu.idx + 1) % #options_menu.options, 1)
-	end
 	if btnp(❎) then
-		options_menu.options[options_menu.idx](u)
-	end
-	if btnp(4) then
-		if minimap.open then
-			minimap.open = false
-		else
-			selector.targeting = nil
-		end
+		prompt_stack:push({ update=update_cam })
 	end
 end
 
@@ -96,9 +101,12 @@ function update_cam()
 	if btnp(❎) then
 		get_islands_in_view()
 		if #islands_in_view > 0 then
-			selector.active = true
 			selector.tidx = 1
 			sfx(1,-1)
+			prompt_stack:push({
+				update=update_select,
+				draw=draw_selected
+			})
 		else
 			sfx(4)
 		end
@@ -118,11 +126,102 @@ function update_cam()
 	end
 end
 
+local mstate = {route_idx=1}
+function update_minimap()
+	if minimap.mode == "r" then
+		if btnp(0) or btnp(2) then
+			mstate.route_idx = max((mstate.route_idx - 1) % (#islands + 1), 1)
+		end
+		if btnp(1) or btnp(3) then
+			mstate.route_idx = max((mstate.route_idx + 1) % (#islands + 1), 1)
+		end
+		if btnp(❎) then
+			add(selector.targeting.route, islands[mstate.route_idx])
+		end
+	end
+end
+
+function draw_minimap()
+	local pos = vec2(32,32)
+	local size = vec2(64,64)
+	local divisor = size/map_dim
+	rfillcam(pos.x-2,pos.y+2,pos.x+size.x-2,pos.y+size.y+2,2)
+	rfillcam(pos.x,pos.y,pos.x+size.x,pos.y+size.y,4)
+	rfillcam(pos.x+1,pos.y+1,pos.x+size.x-1,pos.y+size.y-1,15)
+	sprcam(19,pos.x+1,pos.y+1)
+	sprcam(19,size.x+pos.x-8,pos.y+1, true)
+	sprcam(19,size.x+pos.x-8,size.y+pos.y-8, true, true)
+	sprcam(19,pos.x+1,size.y+pos.y-8, false, true)
+
+	if minimap.mode == "r" then
+		for i,v in ipairs(selector.targeting.route) do
+			if i > 1 then
+				local v2 = selector.targeting.route[i-1]
+				local x1 = pos.x+cam_pos.x+((v.pos.x/8)/4)+1
+				local y1 = pos.y+cam_pos.y+((v.pos.y/8)/4)+1
+				local x2 = pos.x+cam_pos.x+((v2.pos.x/8)/4)+1
+				local y2 = pos.y+cam_pos.y+((v2.pos.y/8)/4)+1
+				line(x1,y1,x2,y2,8)
+			end
+		end
+	end
+
+	for x,_y in pairs(grid) do
+		for y,i in pairs(_y) do
+			local color = 0
+			if i.itype == "mine" then color = 6 end
+			if i.itype == "city" and i.owned then color = 11 end
+			if i.itype == "city" and not i.owned then color = 3 end
+
+			local px1,py1=pos.x+cam_pos.x+(x/4)+1,pos.y+cam_pos.y+(y/4)+1
+			if i == islands[mstate.route_idx] and minimap.mode == "r" then
+				circ(px1,py1,2,8)
+			end
+
+			pset(px1,py1,color)
+		end
+	end
+	for s in all(ships) do
+		local color = 4
+		if s.owned then color = 9 end
+		local x = cam_pos.x+flr((s.pos.x/8)/4)+1
+		local y = cam_pos.y+flr((s.pos.y/8)/4)+1
+		pset(pos.x+x,pos.y+y,color)
+	end
+end
+
+function update_selected()
+	cam_target = islands_in_view[selector.tidx].pos - vec2(64,64)
+
+	local u = selector.targeting
+
+	if btnp(0) or btnp(2) then
+		options_menu.idx = max((options_menu.idx - 1) % (#options_menu.options + 1), 1)
+	end
+	if btnp(1) or btnp(3) then
+		options_menu.idx = max((options_menu.idx + 1) % (#options_menu.options + 1), 1)
+	end
+	if btnp(❎) then
+		options_menu.options[options_menu.idx](u)
+	end
+end
+
+function draw_selected()
+	local pointing_at = islands_in_view[selector.tidx]
+	pointing_at:drawinfo()
+end
+
 function update_select()
-	if btnp(❎) and selector.active then
+	cam_target = islands_in_view[selector.tidx].pos - vec2(64,64)
+
+	if btnp(❎) then
 		selector.targeting = islands_in_view[selector.tidx]
 		selector.targeting:select()
 		sfx(1,-1)
+		prompt_stack:push({
+			update=update_selected,
+			draw=draw_selected
+		})
 		return
 	end
 
@@ -130,17 +229,6 @@ function update_select()
 		selector.tidx = selector.tidx % #islands_in_view
 		selector.tidx += 1
 		sfx(0,-1)
-	end
-	
-	if btnp(4) then
-		if selector.targeting ~= nil then
-			selector.targeting = nil
-			sfx(2,-1)
-		else
-			selector.active = false
-			selector.tidx = 0
-			sfx(2,-1)
-		end
 	end
 end
 
@@ -157,13 +245,13 @@ function _draw()
 	foreach(islands,draw_island)
 	foreach(ships,draw_ship)
 	foreach(items,draw_item)
-	
-	if selector.tidx > 0 then
-		local pointing_at = islands_in_view[selector.tidx]
-		pointing_at:drawinfo()
-	end
 
-	if minimap.open then draw_minimap() end
+	local prompt = prompt_stack:peek()
+	if prompt then
+		if prompt.draw then
+			prompt.draw()
+		end
+	end
 
 	draw_dbg()
 end
@@ -303,46 +391,29 @@ itypecoords={
 islands={}
 islands_in_view={}
 
-function draw_minimap()
-	local pos = vec2(32,32)
-	local size = vec2(64,64)
-	rfillcam(pos.x-2,pos.y+2,pos.x+size.x-2,pos.y+size.y+2,2)
-	rfillcam(pos.x,pos.y,pos.x+size.x,pos.y+size.y,4)
-	rfillcam(pos.x+1,pos.y+1,pos.x+size.x-1,pos.y+size.y-1,15)
-	sprcam(19,pos.x+1,pos.y+1)
-	sprcam(19,size.x+pos.x-8,pos.y+1, true)
-	sprcam(19,size.x+pos.x-8,size.y+pos.y-8, true, true)
-	sprcam(19,pos.x+1,size.y+pos.y-8, false, true)
-
-	for x,_y in pairs(grid) do
-		for y,i in pairs(_y) do
-			local color = 0
-			if i.itype == "mine" then color = 6 end
-			if i.itype == "city" and i.owned then color = 11 end
-			if i.itype == "city" and not i.owned then color = 3 end
-			pset(pos.x+cam_pos.x+(x/4)+1,pos.y+cam_pos.y+(y/4)+1,color)
+function make_islands()
+	local plocal = stack()
+	for x=1,map_dim do
+		for y=1,map_dim do
+			plocal:push(vec2(x,y))
 		end
 	end
-	for s in all(ships) do
-		local color = 4
-		if s.owned then color = 9 end
-		local x = cam_pos.x+flr((s.pos.x/8)/4)+1
-		local y = cam_pos.y+flr((s.pos.y/8)/4)+1
-		pset(pos.x+x,pos.y+y,color)
-	end
-end
+	plocal = shuffle(plocal)
 
-function make_islands()
-	for i = 1,10 do
-		local i = make_island(vec2(_ic(),_ic()))
+	for f in all(factions) do
+		for i=1,4 do
+			local i = make_island(plocal:pop(), "city")
+			i.owned = f.owned
+		end
 	end
-	
-	local player_island = make_island(vec2(_ic(),_ic()), "city")
-	player_island.owned = true
+
+	for i = 1,15 do
+		make_island(plocal:pop(), "mine")
+	end
 end
 
 function _ic()
-	return rnd(248)
+	return rnd(map_dim)
 end
 
 function target_home()
@@ -460,6 +531,14 @@ function dbg(name,val)
 	_dbg[name]=val
 end
 
+function shuffle(t)
+	for n=1,#t*2 do -- #t*2 times seems enough
+			local a,b=flr(1+rnd(#t)),flr(1+rnd(#t))
+			t[a],t[b]=t[b],t[a]
+	end
+	return t
+end
+
 function rfillcam(x1,y1,x2,y2,c) 
 	rectfill(
 		cam_pos.x+x1, 
@@ -508,6 +587,9 @@ end
 function stack()
 	return {
 		push=add,
+		peek=function(self)
+			return self[#self]
+		end,
 		pop=function(self)
 			local v = self[#self]
 			self[#self] = nil
@@ -517,7 +599,6 @@ function stack()
 end
 -->8
 ships={}
-tasks={mine="mine"}
 
 function make_ship()
 	local ship = {
@@ -525,9 +606,8 @@ function make_ship()
 		owned=false,
 		pos=vec2(0.0,0.0),
 		island=nil,
-		task=tasks.mine,
 		target=nil,
-		speed=0.3,
+		speed=2.0,
 		capacity=2,
 		resources={
 			["metal"]=0,
@@ -536,7 +616,9 @@ function make_ship()
 		drawinfo=draw_ship_info,
 		current_task=dock,
 		htime=0.0,
-		select=select_ship
+		select=select_ship,
+		route={},
+		route_idx=1
 	}
 	
 	add(ships,ship)
@@ -547,9 +629,14 @@ end
 function select_ship(ship)
 	options_menu.options = {
 		function()
-			minimap.open = true
+			prompt_stack:push({
+				update=update_minimap,
+				draw=draw_minimap
+			})
+			minimap.mode = "r"
+			selector.targeting.route = {}
 			sfx(1)
-		end,
+		end
 	}
 	options_menu.idx = 1
 end
@@ -608,9 +695,17 @@ function get_resource_total(h)
 end
 
 function set_task(ship, task)
-	ship.task = task
-	ship.target = find_closest(ship, ship.task)
-	ship.current_task = travel
+	if #ship.route > 0 then
+		if #ship.route == 1 then
+			if ship.route[1] != ship.island then
+				ship.target = ship.route[1]
+				ship.current_task = travel
+			end
+		else
+			ship.target = ship.route[ship.route_idx]
+			ship.current_task = travel
+		end
+	end
 end
 
 function find_closest(ship, t)
@@ -690,7 +785,7 @@ end
 function travel(ship)
 	-- check if we should move to target
 	local dist = ship.pos.dist(ship.target.pos,ship.pos)
-	if dist > 1 then
+	if dist > min(1, ship.speed*10.0) then
 		local dir = ship.pos:dir(ship.target.pos)
 		if ship.island != nil then
 			ship.island = nil
@@ -734,6 +829,9 @@ function vec2(x,y)
 				return vec2(v1.x*v2,v1.y*v2)
 			end
  		end,
+		__div=function(v1,v2)
+			return vec2(v1.x/v2,v1.y/v2)
+		end,
 		__tostring=function(v1)
 			return "{x=" .. v1.x .. ",y=" .. v1.y .. "}"
 		end,
