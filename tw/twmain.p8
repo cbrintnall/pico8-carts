@@ -1,12 +1,16 @@
 pico-8 cartridge // http://www.pico-8.com
 version 41
 __lua__
+clouds={}
 map_dim=64
 cam_pos = nil
 cam_target = nil
 cam_speed = 5
 grid={}
 prompt_stack=nil
+time={
+	current=t()
+}
 minimap={
 	open=false,
 	filter=nil,
@@ -23,13 +27,16 @@ options_menu={
 factions={
 	{
 		name="Matthew's Gift",
+		color=6
 	},
 	{
-		name="Coros"
+		name="Coros",
+		color=15
 	},
 	{
 		name="Salivine",
-		owned=true
+		owned=true,
+		color=8
 	}
 }
 
@@ -38,12 +45,7 @@ function _init()
 	cam_target = vec2(0,0)
 
 	make_islands()
-	local start_ship = make_ship()
-	start_ship.owned=true
-	start_ship.island = get_home_island()
-	start_ship.home = start_ship.island
 	target_home()
-	generate_others()
 
 	prompt_stack=stack()
 	prompt_stack:push({ update=update_default, draw=draw_minimap })
@@ -52,6 +54,8 @@ end
 
 function _update()
 	local prompt = prompt_stack:peek()
+
+	dbg("time", t())
 
 	if prompt then
 		if prompt.update then
@@ -76,11 +80,13 @@ function _update()
 		lerp(cam_pos.x, cam_target.x, lerp_amt),
 		lerp(cam_pos.y, cam_target.y, lerp_amt)
 	)
+
+	time.current = t()
+	if time.current >= 60 then
+		foreach()
+	end
 	
 	camera(cam_pos.x,cam_pos.y)
-end
-
-function generate_others()
 end
 
 function entity()
@@ -148,10 +154,10 @@ function draw_minimap()
 	rfillcam(pos.x-2,pos.y+2,pos.x+size.x-2,pos.y+size.y+2,2)
 	rfillcam(pos.x,pos.y,pos.x+size.x,pos.y+size.y,4)
 	rfillcam(pos.x+1,pos.y+1,pos.x+size.x-1,pos.y+size.y-1,15)
-	sprcam(19,pos.x+1,pos.y+1)
-	sprcam(19,size.x+pos.x-8,pos.y+1, true)
-	sprcam(19,size.x+pos.x-8,size.y+pos.y-8, true, true)
-	sprcam(19,pos.x+1,size.y+pos.y-8, false, true)
+	-- sprcam(19,pos.x+1,pos.y+1)
+	-- sprcam(19,size.x+pos.x-8,pos.y+1, true)
+	-- sprcam(19,size.x+pos.x-8,size.y+pos.y-8, true, true)
+	-- sprcam(19,pos.x+1,size.y+pos.y-8, false, true)
 
 	if minimap.mode == "r" then
 		for i,v in ipairs(selector.targeting.route) do
@@ -173,7 +179,7 @@ function draw_minimap()
 			if i.itype == "city" and i.owned then color = 11 end
 			if i.itype == "city" and not i.owned then color = 3 end
 
-			local px1,py1=pos.x+cam_pos.x+(x/4)+1,pos.y+cam_pos.y+(y/4)+1
+			local px1,py1=pos.x+cam_pos.x+(x/divisor.x)+1,pos.y+cam_pos.y+(y/divisor.y)+1
 			if i == islands[mstate.route_idx] and minimap.mode == "r" then
 				circ(px1,py1,2,8)
 			end
@@ -181,13 +187,22 @@ function draw_minimap()
 			pset(px1,py1,color)
 		end
 	end
+	
 	for s in all(ships) do
 		local color = 4
 		if s.owned then color = 9 end
-		local x = cam_pos.x+flr((s.pos.x/8)/4)+1
-		local y = cam_pos.y+flr((s.pos.y/8)/4)+1
+		local x = cam_pos.x+(s.pos.x/8)+1
+		local y = cam_pos.y+(s.pos.y/8)+1
 		pset(pos.x+x,pos.y+y,color)
 	end
+
+	-- local csize = (128/8)/4
+	-- rcam(
+	-- 	(cam_pos.x/8)/4+pos.x-1,
+	-- 	(cam_pos.y/8)/4+pos.y-1, 
+	-- 	(cam_pos.x/8)/4+pos.x+csize+1, 
+	-- 	(cam_pos.y/8)/4+pos.y+csize+1,
+	-- 8)
 end
 
 function update_selected()
@@ -245,6 +260,7 @@ function _draw()
 	foreach(islands,draw_island)
 	foreach(ships,draw_ship)
 	foreach(items,draw_item)
+	foreach(clouds,draw_cloud)
 
 	local prompt = prompt_stack:peek()
 	if prompt then
@@ -254,6 +270,10 @@ function _draw()
 	end
 
 	draw_dbg()
+end
+
+function draw_cloud(cloud)
+
 end
 
 function draw_r_panel()
@@ -393,21 +413,30 @@ islands_in_view={}
 
 function make_islands()
 	local plocal = stack()
-	for x=1,map_dim do
-		for y=1,map_dim do
+	for x=3,map_dim-3 do
+		for y=3,map_dim-3 do
 			plocal:push(vec2(x,y))
 		end
 	end
 	plocal = shuffle(plocal)
 
-	for f in all(factions) do
+	for z,f in ipairs(factions) do
+		local isles = {}
 		for i=1,4 do
-			local i = make_island(plocal:pop(), "city")
-			i.owned = f.owned
+			local island = make_island(plocal:pop(), "city")
+			island.owned = f.owned
+			island.faction_idx = z
+			add(isles, island)
 		end
+		local ssi = rnd(isles)
+		-- each faction gets their own starter ship
+		local ship = make_ship()
+		ship.owned = ssi.owned
+		ship.island = ssi
+		ship.home = ssi
 	end
 
-	for i = 1,15 do
+	for i = 1,10 do
 		make_island(plocal:pop(), "mine")
 	end
 end
@@ -417,28 +446,12 @@ function _ic()
 end
 
 function target_home()
-	local p = get_home_island()
-	cam_target.x = p.pos.x-56
-	cam_target.y = p.pos.y-56
-	get_islands_in_view()
-	for i,v in ipairs(islands_in_view) do
-		if v.owned then
-			selector.active = true
-			selector.tidx = i
-			break
+	for s in all(ships) do
+		if s.owned then
+			cam_target = s.island.pos - vec2(56,56)
+			return
 		end
 	end
-end
-
-function get_home_island()
-	local p = nil
-	for i in all(islands) do
-		if i.owned then
-			p = i
-			break
-		end
-	end
-	return p
 end
 
 function make_island(
@@ -494,6 +507,18 @@ function draw_island(island)
 	
 	local s = itypecoords[island.itype]
 	map(s,62,island.pos.x,island.pos.y,2,2)
+
+	if island.itype == "city" then
+		draw_flag(island.pos+vec2(14,2), factions[island.faction_idx].color)
+	end
+end
+
+function draw_flag(pos, c)
+	line(pos.x,pos.y,pos.x,pos.y+5, 2)
+	line(pos.x,pos.y+1,pos.x,pos.y+2, c)
+	line(pos.x+1,pos.y+1+abs(sin(pos.x+pos.y+t())),pos.x+1,pos.y+2+     abs(sin(pos.x+pos.y+t())), c)
+	line(pos.x+2,pos.y+1+abs(sin(pos.x+pos.y+t()*0.99)),pos.x+2,pos.y+2+abs(sin(pos.x+pos.y+t()*0.99)), c)
+	line(pos.x+3,pos.y+1+abs(sin(pos.x+pos.y+t()*0.98)),pos.x+3,pos.y+2+abs(sin(pos.x+pos.y+t()*0.98)), c)
 end
 
 function get_islands_in_view()
@@ -537,6 +562,26 @@ function shuffle(t)
 			t[a],t[b]=t[b],t[a]
 	end
 	return t
+end
+
+function lcam(x1,y1,x2,y2,c)
+	line(
+		cam_pos.x+x1, 
+		cam_pos.y+y1,
+		cam_pos.x+x2,
+		cam_pos.y+y2,
+		c
+	)
+end
+
+function rcam(x1,y1,x2,y2,c) 
+	rect(
+		cam_pos.x+x1, 
+		cam_pos.y+y1,
+		cam_pos.x+x2,
+		cam_pos.y+y2,
+		c
+	)
 end
 
 function rfillcam(x1,y1,x2,y2,c) 
@@ -618,7 +663,8 @@ function make_ship()
 		htime=0.0,
 		select=select_ship,
 		route={},
-		route_idx=1
+		route_idx=1,
+		faction_idx=1
 	}
 	
 	add(ships,ship)
@@ -909,22 +955,22 @@ function draw_item(i)
 	end
 end
 __gfx__
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008888
-000000000000000000048e000001100000700000000000000000000000000000000000000000000000000000000000000000000000000000000000000cc08998
-0000bbbbbb3000000024877000011000076d0700000000000000000000000000000000000000000000000000000000000000000000000000000000000cc08998
-000b333333333000024428e000111100066d76600000000000000000000000000000000000000000000000000000000000000000000000000000000000008888
-00b33333333333000444442001011010dddd66d00000000000000000000000000000000000000000000000000000000000000000000000000000000088880000
-0b333333333333300742220000011000d76ddddd0000000000000000000000000000000000000000000000000000000000000000000000000000000089980cc0
-0b3333333333333077f0000000011000076ddd760000000000000000000000000000000000000000000000000000000000000000000000000000000089980cc0
-0b33333333333330ff000000001001000066dd760000000000000000000000000000000000000000000000000000000000000000000000000000000088880000
-0b33333333333330000a000044440000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-013333333333333000aa000044000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-06133333333333d00aaaaaaa40400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0661111111111d00aaaaaaaa40000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0066dd55dd5d5d009aaaaaaa00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-005655dd555dd00009aa999900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-000d00555dd50000009a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00050000d55000000009000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000000000077777700000000000000000000000000000000000000000000000000000000000000000000000008888
+000000000000000000048e000001100000700000000777777777700000000000000000000000000000000000000000000000000000000000000000000cc08998
+0000bbbbbb3000000024877000011000076d0700007777777777770000000000000000000000000000000000000000000000000000000000000000000cc08998
+000b333333333000024428e000111100066d76600777777777777770000000000000000000000000000000000000000000000000000000000000000000008888
+00b33333333333000444442001011010dddd66d00777777777777770000000000000000000000000000000000000000000000000000000000000000088880000
+0b333333333333300742220000011000d76ddddd7777777777777666000000000000000000000000000000000000000000000000000000000000000089980cc0
+0b3333333333333077f0000000011000076ddd767777777777776666000000000000000000000000000000000000000000000000000000000000000089980cc0
+0b33333333333330ff000000001001000066dd767777777777766666000000000000000000000000000000000000000000000000000000000000000088880000
+0b33333333333330000a000044440000000000007777777777766666000000000000000000000000000000000000000000000000000000000000000000000000
+013333333333333000aa000044000000000000007777777777766666000000000000000000000000000000000000000000000000000000000000000000000000
+06133333333333d00aaaaaaa40400000000000007777777777666666000000000000000000000000000000000000000000000000000000000000000000000000
+0661111111111d00aaaaaaaa40000000000000000777777776666660000000000000000000000000000000000000000000000000000000000000000000000000
+0066dd55dd5d5d009aaaaaaa00000000000000000777777766666660000000000000000000000000000000000000000000000000000000000000000000000000
+005655dd555dd00009aa999900000000000000000077777666666600000000000000000000000000000000000000000000000000000000000000000000000000
+000d00555dd50000009a000000000000000000000007777666666000000000000000000000000000000000000000000000000000000000000000000000000000
+00050000d55000000009000000000000000000000000076666600000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000077000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000077f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000bbbbbb300000000000000000000000007fff0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
